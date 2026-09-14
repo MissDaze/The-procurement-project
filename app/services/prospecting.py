@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -11,10 +11,14 @@ from app.analysis.scoring import opportunity_score, prospect_score, recompete_sc
 from app.models import Contract, ContractVersion, OpportunityScore, Prospect, ProspectCapability, RecompeteScore, Supplier, Tender
 
 
-# AusTender contract classifications are commonly UNSPSC codes.  These codes are
+LIVE_STATUSES = ("LIVE", "CLOSING SOON")
+# The official current ATM feed is refreshed regularly. A tender that has not
+# been observed for longer than this is withheld from matching/reports until it
+# is seen again, rather than being assumed to still be live.
+LIVE_FRESHNESS_HOURS = 30
+
+# AusTender contract classifications are commonly UNSPSC codes. These codes are
 # useful for matching, but they are not meaningful capability labels for users.
-# Exact mappings are used where we have a high-confidence label; segment labels
-# provide a readable fallback for other 8-digit UNSPSC codes.
 UNSPSC_EXACT_LABELS = {
     "80160000": "Business administration services",
     "80101500": "Business and corporate management consultation services",
@@ -53,9 +57,6 @@ UNSPSC_SEGMENT_LABELS = {
     "93": "Public administration and civic services",
 }
 
-# Common capability phrases that can be inferred from contract titles and
-# descriptions.  These are deliberately broad and evidence-based rather than
-# free-form AI guesses.
 CAPABILITY_PATTERNS = (
     (r"\bsecretariat\b", "Secretariat services"),
     (r"\badministrat(?:ion|ive)\b", "Business administration services"),
@@ -86,12 +87,22 @@ STOPWORDS = {
 }
 
 
+def _current_live_tenders(db: Session) -> list[Tender]:
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=LIVE_FRESHNESS_HOURS)
+    return db.scalars(
+        select(Tender).where(
+            Tender.status.in_(LIVE_STATUSES),
+            Tender.last_seen_at >= cutoff,
+            Tender.closes_at > datetime.now(timezone.utc),
+        )
+    ).all()
+
+
 def _is_unspsc_code(value: str | None) -> bool:
     return bool(value and re.fullmatch(r"\d{8}", value.strip()))
 
 
 def _humanise_category(value: str | None) -> str | None:
-    """Return a readable category label and never expose a bare UNSPSC code."""
     if not value:
         return None
     text = " ".join(value.split()).strip()
@@ -105,12 +116,10 @@ def _humanise_category(value: str | None) -> str | None:
 
 
 def _infer_capabilities(contracts: list[Contract]) -> list[str]:
-    """Infer concise human-readable capabilities from verified contract facts."""
     scores: Counter[str] = Counter()
     for contract in contracts:
         category = _humanise_category(contract.category)
         if category:
-            # Category evidence is repeated per award, so repeated categories rank higher.
             scores[category] += 3
 
         code = (contract.unspsc or "").strip()
@@ -124,9 +133,7 @@ def _infer_capabilities(contracts: list[Contract]) -> list[str]:
             if re.search(pattern, corpus, flags=re.IGNORECASE):
                 scores[label] += 2
 
-    # Never expose numeric codes or empty labels as inferred capabilities.
-    ranked = [name for name, _ in scores.most_common() if name and not _is_unspsc_code(name)]
-    return ranked[:6]
+    return [name for name, _ in scores.most_common() if name and not _is_unspsc_code(name)][:6]
 
 
 def _matching_keywords(contracts: list[Contract], capabilities: list[str]) -> set[str]:
@@ -160,7 +167,7 @@ def rebuild_supplier_metrics(db: Session) -> None:
 def discover_prospects(db: Session) -> int:
     rebuild_supplier_metrics(db)
     created = 0
-    tenders = db.scalars(select(Tender).where(Tender.status.in_(["LIVE", "CLOSING SOON"]))).all()
+    tenders = _current_live_tenders(db)
 
     for supplier in db.scalars(select(Supplier).where(Supplier.contract_count > 0)).all():
         if not supplier.abn or len("".join(filter(str.isdigit, supplier.abn))) != 11 or "withheld" in supplier.canonical_name.lower():
@@ -192,7 +199,6 @@ def discover_prospects(db: Session) -> int:
             db.flush()
             created += 1
 
-        # Store readable labels only. Raw UNSPSC codes stay on Contract.unspsc.
         categories = [_humanise_category(c.category) for c in contracts]
         top_categories = [name for name, _ in Counter(x for x in categories if x).most_common(5)]
         prospect.score = score
@@ -201,8 +207,6 @@ def discover_prospects(db: Session) -> int:
         prospect.inferred_capabilities = capabilities or top_categories
         prospect.next_action = "Generate a tailored sales preview" if score >= 70 else "Review procurement footprint"
 
-        # Remove old machine-generated numeric capability rows, but preserve anything
-        # a user has explicitly confirmed.
         for old in db.scalars(select(ProspectCapability).where(ProspectCapability.prospect_id == prospect.id)).all():
             if not old.confirmed and _is_unspsc_code(old.name):
                 db.delete(old)
@@ -231,6 +235,16 @@ def discover_prospects(db: Session) -> int:
 
 def calculate_matches(db: Session) -> int:
     count = 0
+    live_tenders = _current_live_tenders(db)
+    valid_tender_ids = {t.id for t in live_tenders}
+
+    # Remove opportunity scores that refer to notices, closed, stale or otherwise
+    # unverified tenders. This prevents an old score from leaking into a new report.
+    for existing in db.scalars(select(OpportunityScore)).all():
+        if existing.tender_id not in valid_tender_ids:
+            db.delete(existing)
+    db.flush()
+
     for prospect in db.scalars(select(Prospect)).all():
         supplier = prospect.supplier
         contracts = db.scalars(select(Contract).where(Contract.supplier_id == supplier.id)).all()
@@ -239,14 +253,13 @@ def calculate_matches(db: Session) -> int:
         agencies = {c.agency_id for c in contracts}
         readable_categories = " ".join(_humanise_category(c.category) or "" for c in contracts).lower()
 
-        for tender in db.scalars(select(Tender).where(Tender.status.in_(["LIVE", "CLOSING SOON"]))).all():
+        for tender in live_tenders:
             corpus = ((tender.title or "") + " " + (tender.description or "") + " " + (tender.category or "")).lower()
             tender_words = set(re.findall(r"[a-z][a-z0-9-]{3,}", corpus))
             overlap = len(keywords & tender_words)
+            human_tender_category = _humanise_category(tender.category)
             category_match = bool(
-                tender.category
-                and _humanise_category(tender.category)
-                and (_humanise_category(tender.category) or "").lower() in readable_categories
+                human_tender_category and human_tender_category.lower() in readable_categories
             )
             total, label, parts = opportunity_score(
                 capability=min(30, overlap * 10),
@@ -259,6 +272,7 @@ def calculate_matches(db: Session) -> int:
             )
             if total < 25:
                 continue
+
             item = db.scalar(
                 select(OpportunityScore).where(
                     OpportunityScore.prospect_id == prospect.id,
