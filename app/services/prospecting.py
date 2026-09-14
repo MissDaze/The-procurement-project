@@ -12,13 +12,8 @@ from app.models import Contract, ContractVersion, OpportunityScore, Prospect, Pr
 
 
 LIVE_STATUSES = ("LIVE", "CLOSING SOON")
-# The official current ATM feed is refreshed regularly. A tender that has not
-# been observed for longer than this is withheld from matching/reports until it
-# is seen again, rather than being assumed to still be live.
 LIVE_FRESHNESS_HOURS = 30
 
-# AusTender contract classifications are commonly UNSPSC codes. These codes are
-# useful for matching, but they are not meaningful capability labels for users.
 UNSPSC_EXACT_LABELS = {
     "80160000": "Business administration services",
     "80101500": "Business and corporate management consultation services",
@@ -152,6 +147,23 @@ def _matching_keywords(contracts: list[Contract], capabilities: list[str]) -> se
     }
 
 
+def _words(*values: str | None) -> set[str]:
+    text = " ".join(v or "" for v in values).lower()
+    return {
+        word
+        for word in re.findall(r"[a-z][a-z0-9-]{3,}", text)
+        if word not in STOPWORDS and not word.isdigit()
+    }
+
+
+def _contract_category_labels(contracts: list[Contract]) -> set[str]:
+    return {label.lower() for label in (_humanise_category(c.category) for c in contracts) if label}
+
+
+def _contract_unspsc(contracts: list[Contract]) -> set[str]:
+    return {(c.unspsc or "").strip() for c in contracts if _is_unspsc_code((c.unspsc or "").strip())}
+
+
 def rebuild_supplier_metrics(db: Session) -> None:
     for supplier in db.scalars(select(Supplier)).all():
         rows = db.scalars(select(Contract).where(Contract.supplier_id == supplier.id)).all()
@@ -176,12 +188,18 @@ def discover_prospects(db: Session) -> int:
         contracts = db.scalars(select(Contract).where(Contract.supplier_id == supplier.id)).all()
         capabilities = _infer_capabilities(contracts)
         keywords = _matching_keywords(contracts, capabilities)
-        live = sum(
-            1
-            for tender in tenders
-            if keywords
-            & set(re.findall(r"[a-z][a-z0-9-]{3,}", ((tender.title or "") + " " + (tender.category or "")).lower()))
-        )
+        categories = _contract_category_labels(contracts)
+        unspsc = _contract_unspsc(contracts)
+
+        live = 0
+        for tender in tenders:
+            tender_words = _words(tender.title, tender.description, tender.category)
+            overlap = len(keywords & tender_words)
+            tender_category = (_humanise_category(tender.category) or "").lower()
+            exact_unspsc = bool(tender.unspsc and tender.unspsc in unspsc)
+            category_match = bool(tender_category and tender_category in categories)
+            if exact_unspsc or category_match or overlap >= 2:
+                live += 1
 
         score, breakdown = prospect_score(
             contract_count=supplier.contract_count,
@@ -199,8 +217,8 @@ def discover_prospects(db: Session) -> int:
             db.flush()
             created += 1
 
-        categories = [_humanise_category(c.category) for c in contracts]
-        top_categories = [name for name, _ in Counter(x for x in categories if x).most_common(5)]
+        readable_categories = [_humanise_category(c.category) for c in contracts]
+        top_categories = [name for name, _ in Counter(x for x in readable_categories if x).most_common(5)]
         prospect.score = score
         prospect.score_breakdown = breakdown
         prospect.main_categories = top_categories
@@ -236,13 +254,13 @@ def discover_prospects(db: Session) -> int:
 def calculate_matches(db: Session) -> int:
     count = 0
     live_tenders = _current_live_tenders(db)
-    valid_tender_ids = {t.id for t in live_tenders}
 
-    # Remove opportunity scores that refer to notices, closed, stale or otherwise
-    # unverified tenders. This prevents an old score from leaking into a new report.
+    # Scores are cheap to rebuild and this prevents stale scores created by an
+    # older algorithm from appearing in a new report.
     for existing in db.scalars(select(OpportunityScore)).all():
-        if existing.tender_id not in valid_tender_ids:
-            db.delete(existing)
+        db.delete(existing)
+    for existing in db.scalars(select(RecompeteScore)).all():
+        db.delete(existing)
     db.flush()
 
     for prospect in db.scalars(select(Prospect)).all():
@@ -250,80 +268,124 @@ def calculate_matches(db: Session) -> int:
         contracts = db.scalars(select(Contract).where(Contract.supplier_id == supplier.id)).all()
         capabilities = prospect.inferred_capabilities or _infer_capabilities(contracts)
         keywords = _matching_keywords(contracts, capabilities)
-        agencies = {c.agency_id for c in contracts}
-        readable_categories = " ".join(_humanise_category(c.category) or "" for c in contracts).lower()
+        agencies = {c.agency_id for c in contracts if c.agency_id}
+        category_labels = _contract_category_labels(contracts)
+        prospect_unspsc = _contract_unspsc(contracts)
 
         for tender in live_tenders:
-            corpus = ((tender.title or "") + " " + (tender.description or "") + " " + (tender.category or "")).lower()
-            tender_words = set(re.findall(r"[a-z][a-z0-9-]{3,}", corpus))
-            overlap = len(keywords & tender_words)
-            human_tender_category = _humanise_category(tender.category)
-            category_match = bool(
-                human_tender_category and human_tender_category.lower() in readable_categories
-            )
-            total, label, parts = opportunity_score(
-                capability=min(30, overlap * 10),
-                category=15 if category_match else min(15, overlap * 5),
-                agency=15 if tender.agency_id in agencies else 5,
-                historical=min(15, len(contracts) * 2),
-                location=10,
-                closes_at=tender.closes_at,
-                competitive=3,
-            )
-            if total < 25:
+            tender_words = _words(tender.title, tender.description, tender.category)
+            overlap_terms = keywords & tender_words
+            overlap = len(overlap_terms)
+            human_tender_category = (_humanise_category(tender.category) or "").lower()
+            exact_unspsc = bool(tender.unspsc and tender.unspsc in prospect_unspsc)
+            category_match = bool(human_tender_category and human_tender_category in category_labels)
+
+            # Hard relevance gate: timing, location or a familiar agency may
+            # strengthen a real match, but can never create one by themselves.
+            if not (exact_unspsc or category_match or overlap >= 2):
                 continue
 
-            item = db.scalar(
-                select(OpportunityScore).where(
-                    OpportunityScore.prospect_id == prospect.id,
-                    OpportunityScore.tender_id == tender.id,
+            matching_contracts = 0
+            for contract in contracts:
+                contract_words = _words(contract.title, contract.description, contract.category)
+                same_unspsc = bool(tender.unspsc and contract.unspsc and tender.unspsc == contract.unspsc)
+                same_category = bool(
+                    human_tender_category
+                    and (_humanise_category(contract.category) or "").lower() == human_tender_category
                 )
+                if same_unspsc or same_category or len(contract_words & tender_words) >= 2:
+                    matching_contracts += 1
+
+            location_score = 0
+            supplier_state = (supplier.state or "").strip().upper()
+            tender_location = (tender.location or "").upper()
+            if supplier_state and tender_location:
+                if supplier_state in tender_location or "NATIONAL" in tender_location or "AUSTRALIA" in tender_location:
+                    location_score = 10
+
+            capability_score = min(30, overlap * 10 + (10 if exact_unspsc else 0))
+            category_score = 15 if (exact_unspsc or category_match) else 5 if overlap >= 2 else 0
+            agency_score = 10 if tender.agency_id and tender.agency_id in agencies else 0
+            historical_score = min(15, matching_contracts * 4)
+
+            total, label, parts = opportunity_score(
+                capability=capability_score,
+                category=category_score,
+                agency=agency_score,
+                historical=historical_score,
+                location=location_score,
+                closes_at=tender.closes_at,
+                competitive=0,
             )
-            if not item:
-                item = OpportunityScore(
+            if total < 40:
+                continue
+
+            db.add(
+                OpportunityScore(
                     prospect_id=prospect.id,
                     tender_id=tender.id,
                     score=total,
                     classification=label,
-                    breakdown=parts,
+                    breakdown={
+                        **parts,
+                        "Matched keywords": sorted(overlap_terms)[:8],
+                        "Exact UNSPSC match": exact_unspsc,
+                        "Exact category match": category_match,
+                    },
                 )
-                db.add(item)
-                count += 1
-            else:
-                item.score = total
-                item.classification = label
-                item.breakdown = parts
+            )
+            count += 1
 
+        # Expiry intelligence is a watchlist, not a claim that a future tender
+        # exists. Own contracts and market contracts are treated differently.
         for contract in db.scalars(select(Contract).where(Contract.end_date >= date.today())).all():
-            contract_text = " ".join(filter(None, [contract.title, contract.description, _humanise_category(contract.category)])).lower()
-            if keywords and not any(keyword in contract_text for keyword in keywords):
+            contract_words = _words(contract.title, contract.description, contract.category)
+            overlap_terms = keywords & contract_words
+            human_category = (_humanise_category(contract.category) or "").lower()
+            exact_unspsc = bool(contract.unspsc and contract.unspsc in prospect_unspsc)
+            category_match = bool(human_category and human_category in category_labels)
+            incumbent = contract.supplier_id == supplier.id
+
+            if not incumbent and not (exact_unspsc or (category_match and overlap_terms) or len(overlap_terms) >= 3):
                 continue
+
+            agency_history = [c for c in contracts if c.agency_id and c.agency_id == contract.agency_id]
+            relationship_dates = [c.start_date or c.publication_date for c in agency_history if (c.start_date or c.publication_date)]
+            if relationship_dates:
+                relationship_years = max(0.0, (date.today() - min(relationship_dates)).days / 365.25)
+            else:
+                relationship_years = 0.0
+
             amendments = db.scalar(
                 select(func.count()).select_from(ContractVersion).where(ContractVersion.contract_id == contract.id)
             ) or 0
+            relevance = 20 if exact_unspsc else 15 if category_match else min(15, len(overlap_terms) * 5)
             conf, evidence = recompete_score(
                 end_date=contract.end_date,
                 amendment_count=amendments,
-                agency_frequency=len([c for c in contracts if c.agency_id == contract.agency_id]),
-                relationship_years=2,
+                agency_frequency=len(agency_history),
+                relationship_years=relationship_years,
+                incumbent=incumbent,
+                relevance=relevance,
             )
-            if conf < 35:
+            threshold = 35 if incumbent else 45
+            if conf < threshold:
                 continue
-            rec = db.scalar(
-                select(RecompeteScore).where(
-                    RecompeteScore.prospect_id == prospect.id,
-                    RecompeteScore.contract_id == contract.id,
+
+            db.add(
+                RecompeteScore(
+                    prospect_id=prospect.id,
+                    contract_id=contract.id,
+                    confidence=conf,
+                    evidence={
+                        **evidence,
+                        "Matched keywords": sorted(overlap_terms)[:8],
+                        "Exact UNSPSC match": exact_unspsc,
+                        "Exact category match": category_match,
+                    },
+                    classification="INCUMBENT RENEWAL WATCH" if incumbent else "MARKET EXPIRY WATCH — INFERRED",
                 )
             )
-            if not rec:
-                db.add(
-                    RecompeteScore(
-                        prospect_id=prospect.id,
-                        contract_id=contract.id,
-                        confidence=conf,
-                        evidence=evidence,
-                    )
-                )
 
     db.commit()
     return count
