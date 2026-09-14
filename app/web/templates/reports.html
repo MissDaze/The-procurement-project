@@ -1,0 +1,2 @@
+{% extends 'base.html' %}{% block content %}<h1>Reports</h1><section class="panel tablewrap"><table><tr><th>Report ID</th><th>Type</th><th>Created</th><th>Status</th><th></th></tr>{% for r in rows %}<tr><td>{{r.report_id}}</td><td>{{r.report_type}}</td><td>{{r.created_at}}</td><td>{{r.status}}</td><td><a class="btn secondary" href="/reports/{{r.report_id}}/download">Download PDF</a></td></tr>{% else %}<tr><td colspan="5">No reports generated.</td></tr>{% endfor %}</table></section>{% endblock %}
+

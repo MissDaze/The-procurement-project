@@ -1,0 +1,15 @@
+{
+  "collection_timestamp_utc": "2026-09-14T10:49:20Z",
+  "rss_url": "https://www.tenders.gov.au/public_data/rss/rss.xml",
+  "http_status": 200,
+  "content_type": "text/xml",
+  "response_bytes": 49769,
+  "records_returned": 77,
+  "verified_current_records": [
+    {"atm_id":"DCET-EVCI-CMS-2026","title":"EV Charging Management System (CMS)","agency":"Department of Defence - DSRG","publication_date":"2026-07-31","closing_date":"2026-09-18T12:00:00+10:00","source_url":"https://www.tenders.gov.au/Atm/Show/d356a65c-0769-4ca8-9a5c-e0bba6ca1417","http_status":200,"parsed":true},
+    {"atm_id":"PROC0018432","title":"Indigenous Business Verification and Support Services","agency":"National Indigenous Australians Agency","publication_date":"2026-08-13","closing_date":"2026-09-18T14:00:00+10:00","source_url":"https://www.tenders.gov.au/Atm/Show/f15f6f40-7f54-44cb-ba89-f630cb446374","http_status":200,"parsed":true},
+    {"atm_id":"DFAT-1111","title":"Mid-Term Review of the Climate Resilient Communities Program","agency":"Department of Foreign Affairs and Trade - Australian Aid Program","publication_date":"2026-08-25","closing_date":"2026-09-21T11:00:00+10:00","source_url":"https://www.tenders.gov.au/Atm/Show/ae889192-19d8-4f96-a4bc-f3c1d067adf0","http_status":200,"parsed":true}
+  ],
+  "production_collector_retest": {"status":"healthy","rss_records_checked":73,"detail_records_requested":5,"created":5,"errors":0},
+  "note": "RSS membership is not accepted as proof of live status; detail-page ACT-local close timestamps determine status. The OCDS Contract Notice API was excluded from this gate."
+}

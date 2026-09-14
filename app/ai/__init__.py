@@ -1,0 +1,2 @@
+"""Optional grounded AI layer."""
+
