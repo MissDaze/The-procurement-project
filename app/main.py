@@ -14,7 +14,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Requ
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -208,3 +208,89 @@ def report_download(report_id:str,db:Session=Depends(get_db),_=Depends(auth)):
 def search_all(request:Request,q:str,db:Session=Depends(get_db),_=Depends(auth)):
     ts=db.scalars(select(Tender).where(or_(Tender.title.ilike(f"%{q}%"),Tender.agency_name.ilike(f"%{q}%"))).limit(30)).all(); ps=db.scalars(select(Prospect).join(Supplier).where(Supplier.canonical_name.ilike(f"%{q}%")).limit(30)).all(); cs=db.scalars(select(Contract).where(Contract.title.ilike(f"%{q}%")).limit(30)).all()
     return templates.TemplateResponse("search.html",ctx(request,q=q,tenders=ts,prospects=ps,contracts=cs))
+
+
+@app.get("/debug/supplier-inspection")
+def debug_supplier_inspection(db:Session=Depends(get_db)):
+    """Temporary read-only debug endpoint for production data inspection.
+
+    Returns suppliers matching the target canonical/legal name or ABNs, along with
+    their associated contracts and prospects, plus three specific target tenders.
+    No authentication is required and no mutations are performed. This endpoint is
+    temporary and will be removed after data inspection is complete.
+    """
+    target_name="Andrew H West"
+    target_abns=["52111057446","48237467157"]
+
+    suppliers=db.scalars(select(Supplier).where(or_(Supplier.canonical_name.ilike(f"%{target_name}%"),Supplier.legal_name.ilike(f"%{target_name}%"),Supplier.abn.in_(target_abns)))).all()
+
+    supplier_results=[]
+    for s in suppliers:
+        contracts=db.scalars(select(Contract).where(Contract.supplier_id==s.id).order_by(Contract.publication_date.desc())).all()
+        prospect=db.scalar(select(Prospect).where(Prospect.supplier_id==s.id))
+        supplier_results.append({
+            "id":s.id,
+            "canonical_name":s.canonical_name,
+            "legal_name":s.legal_name,
+            "abn":s.abn,
+            "state":s.state,
+            "entity_type":s.entity_type,
+            "contract_count":s.contract_count,
+            "agency_count":s.agency_count,
+            "disclosed_value":str(s.disclosed_value) if s.disclosed_value is not None else None,
+            "first_award":s.first_award.isoformat() if s.first_award else None,
+            "latest_award":s.latest_award.isoformat() if s.latest_award else None,
+            "contracts":[{
+                "id":c.id,
+                "source":c.source,
+                "source_id":c.source_id,
+                "title":c.title,
+                "description":c.description,
+                "original_value":str(c.original_value) if c.original_value is not None else None,
+                "current_value":str(c.current_value) if c.current_value is not None else None,
+                "publication_date":c.publication_date.isoformat() if c.publication_date else None,
+                "start_date":c.start_date.isoformat() if c.start_date else None,
+                "end_date":c.end_date.isoformat() if c.end_date else None,
+                "category":c.category,
+                "unspsc":c.unspsc,
+                "procurement_method":c.procurement_method,
+                "panel_information":c.panel_information,
+                "source_url":c.source_url,
+                "agency":c.agency.canonical_name if c.agency else None,
+            } for c in contracts],
+            "prospect":({
+                "id":prospect.id,
+                "score":prospect.score,
+                "score_breakdown":prospect.score_breakdown,
+                "lifecycle_stage":prospect.lifecycle_stage,
+                "main_categories":prospect.main_categories,
+                "inferred_capabilities":prospect.inferred_capabilities,
+                "last_contact":prospect.last_contact.isoformat() if prospect.last_contact else None,
+                "follow_up_date":prospect.follow_up_date.isoformat() if prospect.follow_up_date else None,
+                "next_action":prospect.next_action,
+            } if prospect else None),
+        })
+
+    target_tender_titles=["Indigenous Business Verification","Estate Works Program","Australia-India CEO Forum"]
+    tender_conditions=[Tender.title.ilike(f"%{t}%") for t in target_tender_titles]
+    tenders=db.scalars(select(Tender).where(or_(*tender_conditions))).all()
+
+    tender_results=[{
+        "id":t.id,
+        "source":t.source,
+        "source_id":t.source_id,
+        "title":t.title,
+        "description":t.description,
+        "agency_name":t.agency_name,
+        "published_at":t.published_at.isoformat() if t.published_at else None,
+        "closes_at":t.closes_at.isoformat() if t.closes_at else None,
+        "category":t.category,
+        "unspsc":t.unspsc,
+        "location":t.location,
+        "tender_type":t.tender_type,
+        "procurement_method":t.procurement_method,
+        "source_url":t.source_url,
+        "status":t.status,
+    } for t in tenders]
+
+    return {"suppliers":supplier_results,"tenders":tender_results}
