@@ -1,6 +1,115 @@
-<!doctype html><html><head><meta charset="utf-8"><style>
-@page{size:A4;margin:0}*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;color:#0e2a47}.cover{width:210mm;height:297mm;position:relative;overflow:hidden;color:white;background:linear-gradient(120deg,#051222 0%,#07182c 46%,#0a3d66 100%);page-break-after:always}.accent-shape{position:absolute;right:-35mm;top:-10mm;width:115mm;height:240mm;background:linear-gradient(180deg,#12639c,#123a5d);transform:skewX(-18deg)}.topbar{position:absolute;top:18mm;left:16mm;right:16mm;display:flex;justify-content:space-between;z-index:3}.brand-name{font-size:26pt;font-weight:800;letter-spacing:1.2px}.x{color:#1ea3e6}.brand-sub{margin-top:3mm;font-size:8.8pt;letter-spacing:1.8px;text-transform:uppercase}.brand-tagline{margin-top:3mm;font-size:6.6pt;letter-spacing:2.2px;color:#d7e4ef}.gov-box{width:48mm;text-align:right;font-size:7.6pt;line-height:1.55;letter-spacing:1.2px;text-transform:uppercase;color:#e6f3fb}.gov-icon{font-size:22pt;margin-bottom:3mm}.main{position:absolute;left:16mm;top:82mm;width:122mm;z-index:4}.kicker{color:#29a6e6;font-weight:700;font-size:10pt;letter-spacing:3px;text-transform:uppercase;margin-bottom:5mm}.title{font-size:33pt;font-weight:800;line-height:1.02;margin:0}.rule{width:34mm;height:1.2mm;margin-top:7mm;background:#27a8e8}.prepared{margin-top:12mm;font-size:8.4pt;color:#aebdcc}.company{margin-top:2mm;font-size:16pt;font-weight:700}.client-logo{margin-top:4mm;max-width:42mm;max-height:16mm}.details{margin-top:8mm;width:110mm;display:grid;grid-template-columns:38mm auto;row-gap:3mm;font-size:8.3pt}.label{color:#aebdcc}.value{color:white}.side-message{position:absolute;right:15mm;top:96mm;width:46mm;z-index:4;font-size:12pt;font-weight:700;line-height:1.35;text-transform:uppercase;color:#062743}.small-rule{width:14mm;height:.8mm;margin-top:6mm;background:#1ea3e6}.benefits{position:absolute;left:0;right:0;bottom:31mm;height:56mm;background:white;color:#0e2a47;display:grid;grid-template-columns:repeat(4,1fr);z-index:5;padding:9mm 13mm 7mm}.benefit{text-align:center;padding:0 5mm;border-right:.3mm solid #ccd6df}.benefit:last-child{border:0}.icon{font-size:20pt;margin-bottom:3mm}.head{font-size:7.5pt;font-weight:800;text-transform:uppercase}.copy{margin-top:2mm;font-size:6.7pt;line-height:1.45;color:#617487}.footer{position:absolute;bottom:0;left:0;right:0;height:31mm;background:#07182a;display:grid;grid-template-columns:48mm auto 45mm;align-items:center;padding:0 13mm;z-index:6}.footer-brand{font-weight:800;font-size:12pt}.footer-copy{font-size:7.4pt;color:white;padding-left:9mm;border-left:.3mm solid #516375}.footer-site{text-align:right;font-size:7.5pt}.confidential{position:absolute;top:261mm;left:16mm;z-index:7;font-size:5.7pt;color:#708296;letter-spacing:.6px;text-transform:uppercase}.page{padding:10mm;font-size:9pt;page-break-after:auto}.page h1{font-size:21pt;margin:0 0 2mm}.page h2{color:#12639c;border-bottom:1px solid #ccd6df;font-size:14pt;margin:3mm 0 2mm;padding-bottom:1mm}.page h3{font-size:10pt;margin:2mm 0}.page p{margin:1.5mm 0}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:2mm}.metric{background:#eef5fa;padding:2.5mm;border-left:2mm solid #1ea3e6}.metric b{display:block;font-size:13pt}.item{margin:2mm 0;padding:2.5mm;border:1px solid #d9e4ec}.badge{display:inline-block;padding:1mm 2mm;background:#12639c;color:white;font-size:7pt}.warning{background:#fff5d6;padding:2mm;font-size:8pt}.identity{background:#eef5fa;border-left:1.5mm solid #12639c;padding:2mm;font-size:7.5pt}.ai{border-left:1.5mm solid #7b61ff;padding:2mm;background:#f5f2ff}.accent-shape{z-index:1;height:205mm!important}.benefits{z-index:20!important;background-color:#fff!important;background-image:linear-gradient(#fff,#fff)!important}.benefit{background:#fff!important}.footer{z-index:21}.confidential{z-index:22}
-</style></head><body>
-<div class="cover"><div class="accent-shape"></div><div class="topbar"><div><div class="brand-name">NI<span class="x">X</span>SEC</div><div class="brand-sub">Procurement Intelligence</div><div class="brand-tagline">INSIGHT&nbsp;&nbsp; OPPORTUNITY&nbsp;&nbsp; ADVANTAGE</div></div><div class="gov-box"><div class="gov-icon">⌁</div>Australian Government<br>Procurement<br>Intelligence</div></div><div class="main"><div class="kicker">{{report_kicker}}</div><h1 class="title">{{report_title}}</h1><div class="rule"></div><div class="prepared">Prepared for</div><div class="company">{{company_name}}</div>{% if client_logo_url %}<img class="client-logo" src="{{client_logo_url}}">{% endif %}<div class="details"><div class="label">ABN (source record)</div><div class="value">{{company_abn}}</div><div class="label">Procurement category</div><div class="value">{{company_category}}</div><div class="label">Report Date</div><div class="value">{{report_date}}</div><div class="label">Prepared By</div><div class="value">NixSec Procurement Intelligence</div><div class="label">Report Type</div><div class="value">{{report_type}}</div><div class="label">Report ID</div><div class="value">{{report_id}}</div></div></div><div class="side-message">More<br>Than Data.<br>A Clearer<br>Path Forward.<div class="small-rule"></div></div><div class="benefits"><div class="benefit"><div class="icon">⌖</div><div class="head">Identify Opportunities</div><div class="copy">Find relevant live tenders and upcoming procurement opportunities.</div></div><div class="benefit"><div class="icon">▥</div><div class="head">Understand the Market</div><div class="copy">Analyse competitors, suppliers and agency activity.</div></div><div class="benefit"><div class="icon">◎</div><div class="head">Expand Your Reach</div><div class="copy">Reveal agency whitespace and new growth targets.</div></div><div class="benefit"><div class="icon">◇</div><div class="head">Stay Ahead</div><div class="copy">Turn procurement intelligence into business development.</div></div></div><div class="confidential">{{confidentiality_text}}</div><div class="footer"><div class="footer-brand">NI<span class="x">X</span>SEC</div><div class="footer-copy">Australian Government. Real Opportunities. Smarter Decisions.</div><div class="footer-site">{{nixsec_website}}</div></div></div>
-<section class="page"><h1>{{report_title}}</h1><p>Prepared for <b>{{company_name}}</b> · {{report_date}}</p><p class="identity"><b>Entity identity note:</b> {{identity_note}}</p><div class="metrics"><div class="metric"><b>{{supplier.contract_count}}</b>Recorded government contracts</div><div class="metric"><b>${{"{:,.0f}".format(supplier.disclosed_value or 0)}}</b>Recorded disclosed value</div><div class="metric"><b>{{supplier.agency_count}}</b>Recorded agencies served</div><div class="metric"><b>{{matches|length}}</b>Current live matches</div><div class="metric"><b>{{recompetes|length}}</b>Likely recompetes</div><div class="metric"><b>{{prospect.score}}/100</b>Prospect score</div></div><h2>Why this matters</h2><p class="ai">{{narrative}}</p><h2>Strong opportunities</h2>{% for score,tender in matches[:3] %}<div class="item"><span class="badge">LIVE TENDER · {{score.classification}} {{score.score}}/100</span><h3>{{tender.title}}</h3><p>{{tender.agency_name}} · Closes {{tender.closes_at.strftime('%d %b %Y %H:%M') if tender.closes_at else 'Not Available'}}</p><p><a href="{{tender.source_url}}">Official source</a></p></div>{% else %}<p>No recently verified current bid matches are available.</p>{% endfor %}<h2>Likely recompetes</h2><div class="warning"><b>LIKELY RECOMPETE — INFERRED.</b> Historical expiry does not mean a tender is currently advertised.</div>{% for score,contract in recompetes[:3] %}<div class="item"><h3>{{contract.title}}</h3><p>Confidence {{score.confidence}}/100 · expires {{contract.end_date or 'Not Available'}}</p></div>{% else %}<p>No qualifying inferred recompetes are available.</p>{% endfor %}<h2>NixSec value</h2><p>Complete intelligence can include live tenders, closing-soon alerts, contract expiry monitoring, incumbent and competitor intelligence, agency buying behaviour, transparent opportunity scoring and recurring monitoring.</p><p><b>Contact NixSec to turn sourced procurement data into a focused growth pipeline.</b></p></section>
-</body></html>
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+@page{size:A4;margin:0}*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;color:#0e2a47;background:#fff}
+a{color:#086da8;text-decoration:none}.cover{width:210mm;height:297mm;position:relative;overflow:hidden;color:white;background:linear-gradient(120deg,#051222 0%,#07182c 46%,#0a3d66 100%);page-break-after:always}.accent-shape{position:absolute;right:-35mm;top:-10mm;width:115mm;height:205mm;background:linear-gradient(180deg,#12639c,#123a5d);transform:skewX(-18deg);z-index:1}.topbar{position:absolute;top:18mm;left:16mm;right:16mm;display:flex;justify-content:space-between;z-index:3}.brand-name{font-size:26pt;font-weight:800;letter-spacing:1.2px}.x{color:#1ea3e6}.brand-sub{margin-top:3mm;font-size:8.8pt;letter-spacing:1.8px;text-transform:uppercase}.brand-tagline{margin-top:3mm;font-size:6.6pt;letter-spacing:2.2px;color:#d7e4ef}.gov-box{width:48mm;text-align:right;font-size:7.6pt;line-height:1.55;letter-spacing:1.2px;text-transform:uppercase;color:#e6f3fb}.gov-icon{font-size:22pt;margin-bottom:3mm}.main{position:absolute;left:16mm;top:82mm;width:122mm;z-index:4}.kicker{color:#29a6e6;font-weight:700;font-size:10pt;letter-spacing:3px;text-transform:uppercase;margin-bottom:5mm}.title{font-size:33pt;font-weight:800;line-height:1.02;margin:0}.rule{width:34mm;height:1.2mm;margin-top:7mm;background:#27a8e8}.prepared{margin-top:12mm;font-size:8.4pt;color:#aebdcc}.company{margin-top:2mm;font-size:16pt;font-weight:700}.client-logo{margin-top:4mm;max-width:42mm;max-height:16mm}.details{margin-top:8mm;width:112mm;display:grid;grid-template-columns:38mm auto;row-gap:3mm;font-size:8.3pt}.label{color:#aebdcc}.value{color:white}.side-message{position:absolute;right:15mm;top:96mm;width:46mm;z-index:4;font-size:12pt;font-weight:700;line-height:1.35;text-transform:uppercase;color:#062743}.small-rule{width:14mm;height:.8mm;margin-top:6mm;background:#1ea3e6}.benefits{position:absolute;left:0;right:0;bottom:31mm;height:56mm;background:#fff!important;color:#0e2a47;display:grid;grid-template-columns:repeat(4,1fr);z-index:20;padding:9mm 13mm 7mm}.benefit{text-align:center;padding:0 5mm;border-right:.3mm solid #ccd6df}.benefit:last-child{border:0}.icon{font-size:20pt;margin-bottom:3mm}.head{font-size:7.5pt;font-weight:800;text-transform:uppercase}.copy{margin-top:2mm;font-size:6.7pt;line-height:1.45;color:#617487}.footer{position:absolute;bottom:0;left:0;right:0;height:31mm;background:#07182a;display:grid;grid-template-columns:48mm auto 45mm;align-items:center;padding:0 13mm;z-index:21}.footer-brand{font-weight:800;font-size:12pt}.footer-copy{font-size:7.4pt;color:white;padding-left:9mm;border-left:.3mm solid #516375}.footer-site{text-align:right;font-size:7.5pt}.confidential{position:absolute;top:261mm;left:16mm;z-index:22;font-size:5.7pt;color:#708296;letter-spacing:.6px;text-transform:uppercase}
+.page{padding:12mm 14mm 11mm;font-size:9pt;page-break-after:always;min-height:297mm}.page:last-child{page-break-after:auto}.page-header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:.5mm solid #d7e4ed;padding-bottom:3mm;margin-bottom:4mm}.page-title{font-size:21pt;font-weight:800;line-height:1.05}.page-meta{text-align:right;font-size:7.5pt;color:#617487;line-height:1.45}.identity{background:#eef5fa;border-left:1.5mm solid #12639c;padding:2.3mm;font-size:7.3pt;line-height:1.35;margin-bottom:4mm}.signal{display:grid;grid-template-columns:34mm auto;gap:4mm;align-items:stretch;margin:3mm 0 4mm}.signal-label{background:#0c6eaa;color:white;font-size:12pt;font-weight:800;text-align:center;display:flex;align-items:center;justify-content:center;padding:4mm 2mm;letter-spacing:.5px}.signal-copy{background:#f1f7fb;padding:3.5mm 4mm;border:1px solid #d5e3ed;font-size:10pt;line-height:1.42}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:2mm;margin:3mm 0 4mm}.metric{background:#eef5fa;padding:2.7mm;border-top:1.2mm solid #1ea3e6;min-height:17mm}.metric b{display:block;font-size:14pt}.metric span{display:block;margin-top:1mm;font-size:7pt;color:#617487;text-transform:uppercase;letter-spacing:.3px}.section-title{color:#12639c;font-size:13.5pt;font-weight:800;border-bottom:.3mm solid #ccd6df;padding-bottom:1.5mm;margin:4mm 0 2.5mm}.findings{display:grid;grid-template-columns:1fr 1fr;gap:2mm}.finding{background:#f7fafc;border-left:1mm solid #20a7e8;padding:2.5mm;font-size:8.2pt;line-height:1.35}.opportunity{border:1px solid #d9e4ec;margin:3mm 0;padding:3mm;page-break-inside:avoid}.opp-top{display:flex;justify-content:space-between;gap:4mm}.badge{display:inline-block;padding:1mm 2mm;background:#12639c;color:white;font-size:6.8pt;font-weight:700}.opp-title{font-size:11pt;font-weight:800;margin:1.8mm 0 1mm}.opp-meta{font-size:8pt;color:#526b80}.decision-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:2mm;margin-top:2.5mm}.decision-box{padding:2.3mm;background:#f5f8fa;border-top:.8mm solid #7da8c2;min-height:24mm}.decision-box b{display:block;font-size:7pt;text-transform:uppercase;letter-spacing:.4px;color:#12639c;margin-bottom:1mm}.decision-box p{font-size:7.5pt;line-height:1.35;margin:0}.risk{border-top-color:#d7a331}.action{border-top-color:#20a7e8}.watch{border:1px solid #d9e4ec;margin:2.5mm 0;padding:3mm;page-break-inside:avoid}.watch h3{font-size:10pt;margin:0 0 1mm}.watch p{margin:1mm 0;font-size:8pt}.warning{background:#fff5d6;border-left:1.2mm solid #d2a029;padding:2.5mm;font-size:7.8pt;line-height:1.35}.coverage{background:#f3f6f8;padding:3mm;margin-top:3mm;font-size:7.5pt;line-height:1.4}.cta{background:#07182a;color:white;padding:4mm;margin-top:4mm}.cta h2{margin:0 0 1.5mm;color:#29a6e6;font-size:13pt}.cta p{margin:0;font-size:8.6pt;line-height:1.45}.small{font-size:7pt;color:#64798b}.empty{padding:5mm;background:#f5f8fa;border:1px solid #d9e4ec;font-size:9pt;line-height:1.4}.source{font-size:7.5pt;margin-top:1.5mm}.footnote{margin-top:4mm;border-top:.3mm solid #ccd6df;padding-top:2mm;font-size:6.8pt;color:#65798b;line-height:1.35}
+</style>
+</head>
+<body>
+<div class="cover">
+  <div class="accent-shape"></div>
+  <div class="topbar">
+    <div><div class="brand-name">NI<span class="x">X</span>SEC</div><div class="brand-sub">Procurement Intelligence</div><div class="brand-tagline">INSIGHT&nbsp;&nbsp; OPPORTUNITY&nbsp;&nbsp; ADVANTAGE</div></div>
+    <div class="gov-box"><div class="gov-icon">⌁</div>Australian Government<br>Procurement<br>Intelligence</div>
+  </div>
+  <div class="main">
+    <div class="kicker">{{report_kicker}}</div><h1 class="title">{{report_title}}</h1><div class="rule"></div>
+    <div class="prepared">Prepared for</div><div class="company">{{company_name}}</div>
+    {% if client_logo_url %}<img class="client-logo" src="{{client_logo_url}}">{% endif %}
+    <div class="details">
+      <div class="label">ABN (source record)</div><div class="value">{{company_abn}}</div>
+      <div class="label">Procurement category</div><div class="value">{{company_category}}</div>
+      <div class="label">Report Date</div><div class="value">{{report_date}}</div>
+      <div class="label">Prepared By</div><div class="value">NixSec Procurement Intelligence</div>
+      <div class="label">Report Type</div><div class="value">{{report_title}}</div>
+      <div class="label">Report ID</div><div class="value">{{report_id}}</div>
+    </div>
+  </div>
+  <div class="side-message">Know what<br>matters.<br>Know what<br>to do next.<div class="small-rule"></div></div>
+  <div class="benefits">
+    <div class="benefit"><div class="icon">⌖</div><div class="head">Prioritise</div><div class="copy">Surface opportunities that pass a relevance threshold.</div></div>
+    <div class="benefit"><div class="icon">▥</div><div class="head">Understand Why</div><div class="copy">See the evidence behind each recommended opportunity.</div></div>
+    <div class="benefit"><div class="icon">◎</div><div class="head">Act Earlier</div><div class="copy">Track closing dates and relevant contract expiries.</div></div>
+    <div class="benefit"><div class="icon">◇</div><div class="head">Reduce Noise</div><div class="copy">Spend less time scanning tenders that do not fit.</div></div>
+  </div>
+  <div class="confidential">{{confidentiality_text}}</div>
+  <div class="footer"><div class="footer-brand">NI<span class="x">X</span>SEC</div><div class="footer-copy">Australian Government. Relevant Opportunities. Clearer Decisions.</div><div class="footer-site">{{nixsec_website}}</div></div>
+</div>
+
+<section class="page">
+  <div class="page-header"><div><div class="page-title">Decision Brief</div><div class="small">{{company_name}} · {{report_date}}</div></div><div class="page-meta">Report {{report_id}}<br>{{report_title}}</div></div>
+  <div class="identity"><b>Source identity:</b> {{identity_note}}</div>
+
+  <div class="signal"><div class="signal-label">{{analysis.decision_signal}}</div><div class="signal-copy">{{analysis.executive_summary}}</div></div>
+
+  <div class="metrics">
+    <div class="metric"><b>{{match_rows|length}}</b><span>Relevant live opportunities</span></div>
+    <div class="metric"><b>{{expiry_rows|length}}</b><span>Expiry watch items</span></div>
+    <div class="metric"><b>{{supplier.contract_count}}</b><span>Source-record contracts held</span></div>
+    <div class="metric"><b>${{"{:,.0f}".format(supplier.disclosed_value or 0)}}</b><span>Recorded disclosed value</span></div>
+  </div>
+
+  {% if analysis.key_findings %}
+  <div class="section-title">What matters now</div>
+  <div class="findings">{% for finding in analysis.key_findings[:4] %}<div class="finding">{{finding}}</div>{% endfor %}</div>
+  {% endif %}
+
+  <div class="section-title">Priority opportunities</div>
+  {% for row in match_rows[:3] %}
+    <div class="opportunity">
+      <div class="opp-top"><div class="badge">{{row.score.classification}} · {{row.score.score}}/100</div><div class="small">NixSec relevance score</div></div>
+      <div class="opp-title">{{row.tender.title}}</div>
+      <div class="opp-meta">{{row.tender.agency_name}} · Closes {{row.tender.closes_at.strftime('%d %b %Y %H:%M') if row.tender.closes_at else 'Not Available'}} · {{row.tender.tender_type or 'Approach to Market'}}</div>
+      <div class="source"><a href="{{row.tender.source_url}}">Official source / tender documents</a></div>
+      <div class="decision-grid">
+        <div class="decision-box"><b>Why it surfaced</b><p>{{row.insight.why_fit}}</p></div>
+        <div class="decision-box action"><b>Recommended action</b><p>{{row.insight.action}}</p></div>
+        <div class="decision-box risk"><b>Check before bidding</b><p>{{row.insight.risk}}</p></div>
+      </div>
+    </div>
+  {% else %}
+    <div class="empty"><b>No current tender passed the relevance gate.</b><br>NixSec found no recently verified live opportunity strong enough to recommend to this recipient at report time. That is a useful result: it avoids presenting low-evidence tenders merely because they are open.</div>
+  {% endfor %}
+
+  <div class="cta"><h2>Why continued monitoring matters</h2><p>{{analysis.monitoring_value}}</p></div>
+
+  <div class="coverage"><b>Data coverage:</b> Historical contract figures are calculated from records currently stored by NixSec{% if coverage_from or coverage_to %}, covering publication dates {{coverage_from or 'Not Available'}} to {{coverage_to or 'Not Available'}}{% endif %}. They are not represented as the recipient's lifetime Commonwealth procurement totals. Opportunity scores are NixSec decision-support rankings, not government evaluation scores or predictions of award.</div>
+</section>
+
+<section class="page">
+  <div class="page-header"><div><div class="page-title">Forward Pipeline & Evidence</div><div class="small">Relevant expiry signals, evidence and limitations</div></div><div class="page-meta">{{company_name}}<br>{{report_id}}</div></div>
+
+  <div class="section-title">Contract expiry watchlist</div>
+  <div class="warning"><b>Important:</b> An expiring contract is not a live tender. These records are included only as forward-market signals. A future procurement may be renewed, varied, replaced, re-tendered or not proceed.</div>
+  {% for row in expiry_rows[:5] %}
+    <div class="watch">
+      <span class="badge">{{row.score.classification}} · {{row.score.confidence}}/100</span>
+      <h3>{{row.contract.title}}</h3>
+      <p>Current contract end date: <b>{{row.contract.end_date or 'Not Available'}}</b> · Category: {{row.contract.category or 'Not Available'}}</p>
+      <p class="small">Evidence: {% set ev=row.score.evidence or {} %}{% if ev.get('Exact UNSPSC match') %}exact UNSPSC match; {% endif %}{% if ev.get('Exact category match') %}exact category match; {% endif %}{% if ev.get('Matched keywords') %}shared terms {{ev.get('Matched keywords')|join(', ')}}; {% endif %}classification {{row.score.classification}}.</p>
+      <div class="source"><a href="{{row.contract.source_url}}">Official contract source</a></div>
+    </div>
+  {% else %}
+    <div class="empty">No contract-expiry record currently meets NixSec's relevance and confidence threshold for this recipient.</div>
+  {% endfor %}
+
+  {% if analysis.caveats %}
+  <div class="section-title">Material limitations</div>
+  <div class="findings">{% for caveat in analysis.caveats[:4] %}<div class="finding">{{caveat}}</div>{% endfor %}</div>
+  {% endif %}
+
+  <div class="section-title">How to use this report</div>
+  <div class="findings">
+    <div class="finding"><b>1. Open the official tender.</b><br>Confirm conditions of participation, mandatory experience, insurance, security, location and response requirements.</div>
+    <div class="finding"><b>2. Make a bid/no-bid decision.</b><br>Use the NixSec relevance evidence as a prioritisation aid, not as a substitute for the tender documentation.</div>
+    <div class="finding"><b>3. Track what changes.</b><br>Monitor addenda, closing-date changes, newly published opportunities and relevant contract expiry signals.</div>
+    <div class="finding"><b>4. Refine the profile.</b><br>Confirmed capabilities, excluded work, preferred agencies and contract-value limits make future matching materially more precise.</div>
+  </div>
+
+  <div class="footnote"><b>Evidence standard.</b> Live opportunities in this report must be recently observed in the official current ATM feed and pass NixSec's deterministic relevance gate. Company identity fields are source-record fields unless explicitly marked as independently verified. AI may explain and prioritise supplied facts, but it is not permitted to invent tender facts, supplier history, eligibility, scores or dates.</div>
+</section>
+</body>
+</html>
