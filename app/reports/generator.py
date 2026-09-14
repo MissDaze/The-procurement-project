@@ -6,21 +6,24 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from weasyprint import HTML
 
-from app.ai.openrouter import grounded_text
+from app.ai.openrouter import grounded_report_analysis
 from app.config import ROOT, settings
 from app.models import Contract, OpportunityScore, Prospect, ReportRun, RecompeteScore, Tender
 
 REPORT_TITLES = {
-    "Two-Page Prospect Preview": ("GOVERNMENT GROWTH", "Opportunity Preview"),
+    "Two-Page Prospect Preview": ("GOVERNMENT GROWTH", "Procurement Opportunity Brief"),
     "Full Procurement Intelligence Report": ("STRATEGIC INTELLIGENCE", "Procurement Intelligence Report"),
     "Live Tender Report": ("LIVE OPPORTUNITIES", "Tender Intelligence Report"),
-    "Contract Expiry Report": ("FORWARD PIPELINE", "Contract Expiry Report"),
-    "Competitor Intelligence Report": ("MARKET POSITION", "Competitor Intelligence Report"),
-    "Agency Intelligence Report": ("BUYER INSIGHT", "Agency Intelligence Report"),
+    "Contract Expiry Report": ("FORWARD PIPELINE", "Contract Expiry Intelligence"),
+    # Competitor benchmarking is not yet implemented. Keep the requested report
+    # type for workflow compatibility but do not falsely label the output as a
+    # competitor report.
+    "Competitor Intelligence Report": ("MARKET POSITION", "Procurement Position Brief"),
+    "Agency Intelligence Report": ("BUYER INSIGHT", "Agency Opportunity Brief"),
     "Weekly Opportunity Brief": ("THIS WEEK", "Weekly Opportunity Brief"),
 }
 
@@ -30,6 +33,42 @@ LIVE_FRESHNESS_HOURS = 30
 
 def _verified(value):
     return value if value not in (None, "", []) else "Not Available"
+
+
+def _iso(value):
+    return value.isoformat() if value else None
+
+
+def _opportunity_fact(score: OpportunityScore, tender: Tender) -> dict:
+    return {
+        "source_id": tender.source_id,
+        "title": tender.title,
+        "agency": tender.agency_name,
+        "published_at": _iso(tender.published_at),
+        "closes_at": _iso(tender.closes_at),
+        "tender_type": tender.tender_type,
+        "category": tender.category,
+        "unspsc": tender.unspsc,
+        "score": score.score,
+        "classification": score.classification,
+        "score_evidence": score.breakdown or {},
+        "official_source": tender.source_url,
+    }
+
+
+def _expiry_fact(score: RecompeteScore, contract: Contract, supplier_id: int) -> dict:
+    return {
+        "source_id": contract.source_id,
+        "title": contract.title,
+        "end_date": _iso(contract.end_date),
+        "category": contract.category,
+        "unspsc": contract.unspsc,
+        "confidence": score.confidence,
+        "classification": score.classification,
+        "evidence": score.evidence or {},
+        "recipient_is_incumbent": contract.supplier_id == supplier_id,
+        "official_source": contract.source_url,
+    }
 
 
 def generate(db: Session, prospect_id: int, report_type: str = "Two-Page Prospect Preview") -> ReportRun:
@@ -42,8 +81,6 @@ def generate(db: Session, prospect_id: int, report_type: str = "Two-Page Prospec
     kicker, title = REPORT_TITLES.get(report_type, ("PROCUREMENT INTELLIGENCE", report_type))
     cutoff = datetime.now(timezone.utc) - timedelta(hours=LIVE_FRESHNESS_HOURS)
 
-    # Reports must never rely on an old OpportunityScore alone. The underlying
-    # tender must still be a current, recently observed bid opportunity.
     matches = db.execute(
         select(OpportunityScore, Tender)
         .join(Tender, Tender.id == OpportunityScore.tender_id)
@@ -65,20 +102,52 @@ def generate(db: Session, prospect_id: int, report_type: str = "Two-Page Prospec
         .limit(10)
     ).all()
 
+    coverage_from, coverage_to = db.execute(
+        select(func.min(Contract.publication_date), func.max(Contract.publication_date))
+    ).one()
+
+    opportunity_facts = [_opportunity_fact(score, tender) for score, tender in matches]
+    expiry_facts = [_expiry_fact(score, contract, supplier.id) for score, contract in recompetes]
     facts = {
         "company_name_as_recorded": supplier.canonical_name,
         "abn_as_recorded": supplier.abn,
+        "identity_independently_verified": False,
+        "procurement_categories": prospect.main_categories or [],
+        "inferred_capabilities": prospect.inferred_capabilities or [],
         "recorded_contracts": supplier.contract_count,
         "recorded_disclosed_value": str(supplier.disclosed_value),
         "recorded_agencies": supplier.agency_count,
-        "current_live_matches": len(matches),
-        "prospect_score": prospect.score,
+        "historical_coverage": {
+            "from": _iso(coverage_from),
+            "to": _iso(coverage_to),
+            "meaning": "Date range of contract notices currently stored by NixSec; not represented as lifetime procurement history.",
+        },
+        "opportunities": opportunity_facts,
+        "expiry_watches": expiry_facts,
+        "score_note": "NixSec scores are decision-support rankings, not government evaluation scores or predictions of award.",
     }
-    narrative = grounded_text(
-        "Using only these recorded procurement facts, explain in two sentences why monitoring may be useful. Do not describe the entity identity as independently verified.",
-        facts,
-        "The recorded procurement footprint may benefit from systematic tender, expiry and agency monitoring. Entity identity fields are shown as recorded in source procurement data and should be independently verified before external use.",
-    )
+    analysis = grounded_report_analysis(facts)
+    opportunity_insights = analysis.get("opportunity_insights") or {}
+
+    match_rows = []
+    for score, tender in matches:
+        insight = opportunity_insights.get(tender.source_id) or opportunity_insights.get(tender.title) or {}
+        match_rows.append(
+            {
+                "score": score,
+                "tender": tender,
+                "insight": {
+                    "why_fit": insight.get("why_fit") or "The opportunity passed NixSec's deterministic relevance threshold; review the official tender documents before treating it as a bid target.",
+                    "action": insight.get("action") or "Open the official source and make a bid/no-bid decision against the mandatory requirements.",
+                    "risk": insight.get("risk") or "Eligibility and delivery capability have not been independently confirmed by NixSec.",
+                },
+            }
+        )
+
+    expiry_rows = [
+        {"score": score, "contract": contract}
+        for score, contract in recompetes
+    ]
 
     env = Environment(
         loader=FileSystemLoader(str(ROOT / "app" / "reports" / "templates")),
@@ -88,6 +157,7 @@ def generate(db: Session, prospect_id: int, report_type: str = "Two-Page Prospec
     html = env.get_template("report.html").render(
         report_kicker=kicker,
         report_title=title,
+        requested_report_type=report_type,
         company_name=_verified(supplier.canonical_name),
         company_abn=_verified(supplier.abn),
         company_category=_verified((prospect.main_categories or [None])[0]),
@@ -101,8 +171,12 @@ def generate(db: Session, prospect_id: int, report_type: str = "Two-Page Prospec
         prospect=prospect,
         supplier=supplier,
         matches=matches,
+        match_rows=match_rows,
         recompetes=recompetes,
-        narrative=narrative,
+        expiry_rows=expiry_rows,
+        analysis=analysis,
+        coverage_from=coverage_from,
+        coverage_to=coverage_to,
     )
 
     settings.report_dir.mkdir(parents=True, exist_ok=True)
@@ -113,7 +187,14 @@ def generate(db: Session, prospect_id: int, report_type: str = "Two-Page Prospec
         prospect_id=prospect.id,
         report_type=report_type,
         file_path=str(path),
-        parameters={"cover_first": True, "identity_fields_independently_verified": False},
+        parameters={
+            "cover_first": True,
+            "identity_fields_independently_verified": False,
+            "contract_coverage_from": _iso(coverage_from),
+            "contract_coverage_to": _iso(coverage_to),
+            "external_report_hides_internal_prospect_score": True,
+            "ai_decision_support": True,
+        },
     )
     db.add(run)
     db.commit()
