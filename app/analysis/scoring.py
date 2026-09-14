@@ -30,7 +30,20 @@ def opportunity_score(*, capability:int, category:int, agency:int, historical:in
     return total,classification,parts
 
 
-def recompete_score(*, end_date:date|None, amendment_count:int, agency_frequency:int, relationship_years:float) -> tuple[int,dict]:
+def recompete_score(*, end_date:date|None, amendment_count:int, agency_frequency:int, relationship_years:float, incumbent:bool=False, relevance:int=0) -> tuple[int,dict]:
+    """Score an expiry watch without manufacturing incumbency evidence.
+
+    `relevance` is supplied by deterministic category/capability matching. Incumbent
+    points are only awarded when the expiring contract is actually attributed to
+    the prospect supplier.
+    """
     days=(end_date-date.today()).days if end_date else 9999
-    parts={"Expiry proximity":35 if 0<=days<=180 else 25 if days<=365 else 0,"Amendment history":min(20,amendment_count*5),"Agency purchasing frequency":min(25,agency_frequency*5),"Incumbency evidence":min(20,int(relationship_years*4))}
+    parts={
+        "Expiry proximity":35 if 0<=days<=180 else 25 if 180<days<=365 else 10 if 365<days<=540 else 0,
+        "Capability/category relevance":min(20,max(0,relevance)),
+        "Amendment history":min(10,max(0,amendment_count)*2),
+        "Agency relationship":min(15,max(0,agency_frequency)*5),
+        "Incumbent position":15 if incumbent else 0,
+        "Relationship duration":min(5,max(0,int(relationship_years))),
+    }
     return sum(parts.values()),parts
