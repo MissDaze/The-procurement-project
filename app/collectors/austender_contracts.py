@@ -5,6 +5,7 @@ import json
 import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from urllib.parse import urljoin
 
 import httpx
 from sqlalchemy import select
@@ -14,6 +15,7 @@ from app.models import Agency, CollectionRun, Contract, ContractVersion, Rejecte
 
 API = "https://api.tenders.gov.au/ocds/findByDates/contractPublished/{start}/{end}"
 SOURCE = "AusTender OCDS Contract Notices"
+HEADERS = {"Accept": "application/json", "User-Agent": "NixSecProcurementIntelligence/1.0"}
 
 
 def _dt(value):
@@ -159,97 +161,131 @@ def parse_release(release: dict) -> dict:
     }
 
 
-def collect(db: Session, day: date | None = None) -> CollectionRun:
-    day = day or (date.today() - timedelta(days=1))
-    nxt = day + timedelta(days=1)
-    run = CollectionRun(source=SOURCE, collection_type="awarded_contracts")
+def _fetch_releases(client: httpx.Client, start_day: date, end_day: date) -> list[dict]:
+    """Fetch every page for a published-date window.
+
+    AusTender OCDS responses can be paginated. Ignoring `links.next` silently
+    undercounts contract notices, which then corrupts supplier totals and prospect
+    discovery. The official ecosystem commonly collects this API in short date
+    windows; NixSec uses seven-day windows for historical backfill.
+    """
+    url = API.format(start=f"{start_day.isoformat()}T00:00:00Z", end=f"{end_day.isoformat()}T00:00:00Z")
+    releases: list[dict] = []
+    seen_urls: set[str] = set()
+
+    while url:
+        if url in seen_urls:
+            raise RuntimeError("AusTender OCDS pagination loop detected")
+        if len(seen_urls) >= 1000:
+            raise RuntimeError("AusTender OCDS pagination exceeded safety limit")
+        seen_urls.add(url)
+
+        response = client.get(url)
+        response.raise_for_status()
+        payload = response.json()
+        releases.extend(payload.get("releases", []) or [])
+        next_url = (payload.get("links") or {}).get("next")
+        url = urljoin(url, next_url) if next_url else ""
+
+    return releases
+
+
+def _store_release(db: Session, release: dict, run: CollectionRun) -> None:
+    row = parse_release(release)
+    if not row["source_id"] or not row["agency_name"]:
+        raise ValueError("Missing contract identity")
+
+    agency = db.scalar(select(Agency).where(Agency.canonical_name == row["agency_name"]))
+    if not agency:
+        agency = Agency(canonical_name=row["agency_name"])
+        db.add(agency)
+        db.flush()
+
+    supplier = None
+    identity_issue = row.get("supplier_issue")
+    if not identity_issue:
+        supplier, identity_issue = _resolve_supplier(db, row.get("supplier_name"), row.get("supplier_abn"))
+
+    raw_hash = hashlib.sha256(json.dumps(release, sort_keys=True).encode()).hexdigest()
+    item = db.scalar(select(Contract).where(Contract.source == SOURCE, Contract.source_id == row["source_id"]))
+    fields = {
+        k: row[k]
+        for k in (
+            "source_id", "title", "description", "current_value", "publication_date",
+            "start_date", "end_date", "category", "unspsc", "procurement_method", "source_url"
+        )
+    }
+
+    if not item:
+        item = Contract(
+            source=SOURCE,
+            raw_hash=raw_hash,
+            supplier_id=supplier.id if supplier else None,
+            agency_id=agency.id,
+            original_value=row["current_value"],
+            **fields,
+        )
+        db.add(item)
+        run.created += 1
+    elif item.raw_hash != raw_hash or item.supplier_id != (supplier.id if supplier else None):
+        db.add(
+            ContractVersion(
+                contract_id=item.id,
+                raw_hash=item.raw_hash,
+                previous_value=item.current_value,
+                previous_end_date=item.end_date,
+                snapshot={
+                    "value": str(item.current_value),
+                    "end_date": str(item.end_date),
+                    "supplier_id": item.supplier_id,
+                },
+            )
+        )
+        for key, value in fields.items():
+            setattr(item, key, value)
+        item.supplier_id = supplier.id if supplier else None
+        item.agency_id = agency.id
+        item.raw_hash = raw_hash
+        run.updated += 1
+
+    if identity_issue:
+        db.add(
+            RejectedRecord(
+                source=SOURCE,
+                reason=f"Supplier attribution withheld: {identity_issue}",
+                payload={
+                    "ocid": release.get("ocid"),
+                    "contract_id": row["source_id"],
+                    "supplier_name": row.get("supplier_name"),
+                    "supplier_abn": row.get("supplier_abn"),
+                },
+            )
+        )
+
+
+def collect(
+    db: Session,
+    day: date | None = None,
+    end_day: date | None = None,
+    collection_type: str = "awarded_contracts",
+) -> CollectionRun:
+    start_day = day or (date.today() - timedelta(days=1))
+    end_day = end_day or (start_day + timedelta(days=1))
+    if end_day <= start_day:
+        raise ValueError("end_day must be after day")
+
+    run = CollectionRun(source=SOURCE, collection_type=collection_type)
     db.add(run)
     db.commit()
 
     try:
-        url = API.format(start=f"{day.isoformat()}T00:00:00Z", end=f"{nxt.isoformat()}T00:00:00Z")
-        response = httpx.get(
-            url,
-            headers={"Accept": "application/json", "User-Agent": "NixSecProcurementIntelligence/1.0"},
-            timeout=60,
-        )
-        response.raise_for_status()
-        releases = response.json().get("releases", [])
+        with httpx.Client(headers=HEADERS, timeout=60, follow_redirects=True) as client:
+            releases = _fetch_releases(client, start_day, end_day)
         run.checked = len(releases)
 
         for release in releases:
             try:
-                row = parse_release(release)
-                if not row["source_id"] or not row["agency_name"]:
-                    raise ValueError("Missing contract identity")
-
-                agency = db.scalar(select(Agency).where(Agency.canonical_name == row["agency_name"]))
-                if not agency:
-                    agency = Agency(canonical_name=row["agency_name"])
-                    db.add(agency)
-                    db.flush()
-
-                supplier = None
-                identity_issue = row.get("supplier_issue")
-                if not identity_issue:
-                    supplier, identity_issue = _resolve_supplier(db, row.get("supplier_name"), row.get("supplier_abn"))
-
-                raw_hash = hashlib.sha256(json.dumps(release, sort_keys=True).encode()).hexdigest()
-                item = db.scalar(select(Contract).where(Contract.source == SOURCE, Contract.source_id == row["source_id"]))
-                fields = {
-                    k: row[k]
-                    for k in (
-                        "source_id", "title", "description", "current_value", "publication_date",
-                        "start_date", "end_date", "category", "unspsc", "procurement_method", "source_url"
-                    )
-                }
-
-                if not item:
-                    item = Contract(
-                        source=SOURCE,
-                        raw_hash=raw_hash,
-                        supplier_id=supplier.id if supplier else None,
-                        agency_id=agency.id,
-                        original_value=row["current_value"],
-                        **fields,
-                    )
-                    db.add(item)
-                    run.created += 1
-                elif item.raw_hash != raw_hash or item.supplier_id != (supplier.id if supplier else None):
-                    db.add(
-                        ContractVersion(
-                            contract_id=item.id,
-                            raw_hash=item.raw_hash,
-                            previous_value=item.current_value,
-                            previous_end_date=item.end_date,
-                            snapshot={
-                                "value": str(item.current_value),
-                                "end_date": str(item.end_date),
-                                "supplier_id": item.supplier_id,
-                            },
-                        )
-                    )
-                    for key, value in fields.items():
-                        setattr(item, key, value)
-                    item.supplier_id = supplier.id if supplier else None
-                    item.agency_id = agency.id
-                    item.raw_hash = raw_hash
-                    run.updated += 1
-
-                if identity_issue:
-                    db.add(
-                        RejectedRecord(
-                            source=SOURCE,
-                            reason=f"Supplier attribution withheld: {identity_issue}",
-                            payload={
-                                "ocid": release.get("ocid"),
-                                "contract_id": row["source_id"],
-                                "supplier_name": row.get("supplier_name"),
-                                "supplier_abn": row.get("supplier_abn"),
-                            },
-                        )
-                    )
-
+                _store_release(db, release, run)
                 db.commit()
             except Exception as exc:
                 db.rollback()
@@ -268,3 +304,22 @@ def collect(db: Session, day: date | None = None) -> CollectionRun:
     db.add(run)
     db.commit()
     return run
+
+
+def backfill(db: Session, days: int = 365, chunk_days: int = 7) -> list[CollectionRun]:
+    """Backfill historical published Contract Notices in bounded weekly windows."""
+    days = max(1, min(int(days), 3650))
+    chunk_days = max(1, min(int(chunk_days), 31))
+    end = date.today()
+    cursor = end - timedelta(days=days)
+    runs: list[CollectionRun] = []
+
+    while cursor < end:
+        nxt = min(cursor + timedelta(days=chunk_days), end)
+        run = collect(db, day=cursor, end_day=nxt, collection_type="awarded_contracts_backfill")
+        runs.append(run)
+        if run.status == "failed":
+            break
+        cursor = nxt
+
+    return runs
