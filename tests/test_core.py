@@ -5,12 +5,14 @@ from pathlib import Path
 from sqlalchemy.exc import IntegrityError
 
 from app.analysis.scoring import opportunity_score, prospect_score, recompete_score
+from app.collectors.austender_contracts import parse_release
 from app.collectors.austender_live import parse_detail, parse_rss
 from app.models import Agency, Prospect, Supplier, Tender
 from app.reports.generator import generate
 
 RSS = b'''<rss><channel><item><title>ATM-1: Security Services</title><link>https://www.tenders.gov.au/Atm/Show/abc</link><description><![CDATA[<p>Cyber security work</p>]]></description><pubDate>Mon, 14 Sep 2026 00:00:00 GMT</pubDate></item></channel></rss>'''
 DETAIL = '''<p class="lead">Security Services</p><div class="list-desc"><label for="AtmId">ATM ID</label>:<div class="list-desc-inner">ATM-1</div></div><div class="list-desc"><label for="Agency">Agency</label>:<div class="list-desc-inner">Test Agency</div></div><div class="list-desc"><label for="Category">Category</label>:<div class="list-desc-inner">81111800 - System services</div></div><div class="list-desc"><label for="CloseDate">Close Date &amp; Time</label>:<div class="list-desc-inner">14-Sep-2099 5:00 pm <span>(ACT Local Time)</span></div></div><div class="list-desc"><label for="Type">ATM Type</label>:<div class="list-desc-inner">Request for Tender</div></div>'''
+NOTICE_DETAIL = '''<p class="lead">Notice - Estate Works Program Defence Industry Update</p><div class="list-desc"><label for="AtmId">ATM ID</label>:<div class="list-desc-inner">NOTICE-1</div></div><div class="list-desc"><label for="Agency">Agency</label>:<div class="list-desc-inner">Department of Defence</div></div><div class="list-desc"><label for="Category">Category</label>:<div class="list-desc-inner">80160000 - Business administration services</div></div><div class="list-desc"><label for="CloseDate">Close Date &amp; Time</label>:<div class="list-desc-inner">14-Sep-2099 5:00 pm <span>(ACT Local Time)</span></div></div><div class="list-desc"><label for="Type">ATM Type</label>:<div class="list-desc-inner">Notice</div></div>'''
 
 
 def test_rss_and_detail_parser():
@@ -20,6 +22,72 @@ def test_rss_and_detail_parser():
     assert result["agency_name"] == "Test Agency"
     assert result["unspsc"] == "81111800"
     assert result["status"] == "LIVE"
+
+
+def test_non_bid_notice_is_not_live_tender():
+    base = {
+        "atm_id_hint": "NOTICE-1",
+        "title": "Notice - Estate Works Program Defence Industry Update",
+        "description": "Industry information only",
+        "published_at": datetime.now(timezone.utc),
+        "source_url": "https://www.tenders.gov.au/Atm/Show/notice-1",
+    }
+    result = parse_detail(NOTICE_DETAIL, base)
+    assert result["tender_type"] == "Notice"
+    assert result["status"] == "NOTICE"
+
+
+def test_contract_supplier_resolves_through_award_not_first_supplier_party():
+    release = {
+        "ocid": "ocds-test-1",
+        "date": "2026-09-14T00:00:00Z",
+        "parties": [
+            {"id": "buyer-1", "name": "Test Agency", "roles": ["buyer"]},
+            {
+                "id": "supplier-wrong",
+                "name": "ZESTUCCINE PTY LTD",
+                "roles": ["supplier"],
+                "additionalIdentifiers": [{"scheme": "AU-ABN", "id": "52 111 057 446"}],
+            },
+            {
+                "id": "supplier-right",
+                "name": "ANDREW H WEST & ASSOCIATES",
+                "roles": ["supplier"],
+                "additionalIdentifiers": [{"scheme": "AU-ABN", "id": "48 237 467 157"}],
+            },
+        ],
+        "awards": [
+            {
+                "id": "award-1",
+                "suppliers": [{"id": "supplier-right", "name": "ANDREW H WEST & ASSOCIATES"}],
+            }
+        ],
+        "contracts": [
+            {
+                "id": "CN-TEST-1",
+                "awardID": "award-1",
+                "title": "Secretariat Services",
+                "value": {"amount": 26100},
+                "period": {"startDate": "2026-09-01T00:00:00Z", "endDate": "2027-09-01T00:00:00Z"},
+                "items": [
+                    {
+                        "classification": {
+                            "scheme": "UNSPSC",
+                            "id": "80160000",
+                            "description": "Business administration services",
+                        }
+                    }
+                ],
+            }
+        ],
+        "tender": {},
+    }
+    result = parse_release(release)
+    assert result["supplier_name"] == "ANDREW H WEST & ASSOCIATES"
+    assert result["supplier_abn"] == "48237467157"
+    assert result["supplier_issue"] is None
+    assert result["unspsc"] == "80160000"
+    assert result["category"] == "Business administration services"
 
 
 def test_scores_deterministic_and_explainable():
@@ -53,6 +121,7 @@ def test_report_cover_first_and_missing_data(db, tmp_path, monkeypatch):
     run = generate(db, prospect.id)
     data = Path(run.file_path).read_bytes()
     assert data.startswith(b"%PDF") and run.parameters["cover_first"] is True
+    assert run.parameters["identity_fields_independently_verified"] is False
 
 
 def test_prospect_history_identity(db):
