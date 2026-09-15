@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from weasyprint import HTML
 
-from app.ai.openrouter import grounded_report_analysis
+from app.ai.tender_recommendation import analyse_tenders_for_company, build_company_profile
 from app.config import ROOT, settings
 from app.models import Contract, OpportunityScore, Prospect, ReportRun, RecompeteScore, Tender
 
@@ -19,9 +19,6 @@ REPORT_TITLES = {
     "Full Procurement Intelligence Report": ("STRATEGIC INTELLIGENCE", "Procurement Intelligence Report"),
     "Live Tender Report": ("LIVE OPPORTUNITIES", "Tender Intelligence Report"),
     "Contract Expiry Report": ("FORWARD PIPELINE", "Contract Expiry Intelligence"),
-    # Competitor benchmarking is not yet implemented. Keep the requested report
-    # type for workflow compatibility but do not falsely label the output as a
-    # competitor report.
     "Competitor Intelligence Report": ("MARKET POSITION", "Procurement Position Brief"),
     "Agency Intelligence Report": ("BUYER INSIGHT", "Agency Opportunity Brief"),
     "Weekly Opportunity Brief": ("THIS WEEK", "Weekly Opportunity Brief"),
@@ -39,7 +36,7 @@ def _iso(value):
     return value.isoformat() if value else None
 
 
-def _opportunity_fact(score: OpportunityScore, tender: Tender) -> dict:
+def _tender_fact(tender: Tender, score: OpportunityScore | None = None) -> dict:
     return {
         "source_id": tender.source_id,
         "title": tender.title,
@@ -49,10 +46,14 @@ def _opportunity_fact(score: OpportunityScore, tender: Tender) -> dict:
         "tender_type": tender.tender_type,
         "category": tender.category,
         "unspsc": tender.unspsc,
-        "score": score.score,
-        "classification": score.classification,
-        "score_evidence": score.breakdown or {},
+        "description": (tender.description or "")[:1800],
+        "location": tender.location,
+        "procurement_method": tender.procurement_method,
+        "contact_details": tender.contact_details or {},
+        "document_links": tender.document_links or [],
         "official_source": tender.source_url,
+        "internal_deterministic_score": score.score if score else None,
+        "internal_score_breakdown": score.breakdown if score else None,
     }
 
 
@@ -71,6 +72,45 @@ def _expiry_fact(score: RecompeteScore, contract: Contract, supplier_id: int) ->
     }
 
 
+def _live_tenders(db: Session, limit: int = 60) -> list[Tender]:
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=LIVE_FRESHNESS_HOURS)
+    return db.scalars(
+        select(Tender)
+        .where(
+            Tender.status.in_(LIVE_STATUSES),
+            Tender.last_seen_at >= cutoff,
+            Tender.closes_at > datetime.now(timezone.utc),
+        )
+        .order_by(Tender.closes_at.asc())
+        .limit(limit)
+    ).all()
+
+
+def _company_contract_facts(db: Session, supplier_id: int) -> list[dict]:
+    rows = db.scalars(
+        select(Contract)
+        .where(Contract.supplier_id == supplier_id)
+        .order_by(Contract.publication_date.desc())
+        .limit(30)
+    ).all()
+    return [
+        {
+            "source_id": c.source_id,
+            "title": c.title,
+            "description": (c.description or "")[:1200],
+            "category": c.category,
+            "unspsc": c.unspsc,
+            "value": float(c.current_value or 0),
+            "publication_date": _iso(c.publication_date),
+            "start_date": _iso(c.start_date),
+            "end_date": _iso(c.end_date),
+            "agency": c.agency.canonical_name if c.agency else None,
+            "official_source": c.source_url,
+        }
+        for c in rows
+    ]
+
+
 def generate(db: Session, prospect_id: int, report_type: str = "Two-Page Prospect Preview") -> ReportRun:
     prospect = db.get(Prospect, prospect_id)
     if not prospect:
@@ -79,81 +119,61 @@ def generate(db: Session, prospect_id: int, report_type: str = "Two-Page Prospec
     supplier = prospect.supplier
     report_id = f"NS-{date.today():%Y%m%d}-{uuid.uuid4().hex[:8].upper()}"
     kicker, title = REPORT_TITLES.get(report_type, ("PROCUREMENT INTELLIGENCE", report_type))
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=LIVE_FRESHNESS_HOURS)
 
-    matches = db.execute(
-        select(OpportunityScore, Tender)
-        .join(Tender, Tender.id == OpportunityScore.tender_id)
-        .where(
-            OpportunityScore.prospect_id == prospect.id,
-            Tender.status.in_(LIVE_STATUSES),
-            Tender.last_seen_at >= cutoff,
-            Tender.closes_at > datetime.now(timezone.utc),
-        )
-        .order_by(OpportunityScore.score.desc())
-        .limit(10)
-    ).all()
+    live_tenders = _live_tenders(db)
+    score_rows = db.scalars(select(OpportunityScore).where(OpportunityScore.prospect_id == prospect.id)).all()
+    score_by_tender = {row.tender_id: row for row in score_rows}
+
+    company_contracts = _company_contract_facts(db, supplier.id)
+    company_profile = build_company_profile(
+        supplier.canonical_name,
+        supplier.abn,
+        prospect.inferred_capabilities or [],
+        prospect.main_categories or [],
+        company_contracts,
+    )
+
+    tender_facts = [_tender_fact(t, score_by_tender.get(t.id)) for t in live_tenders]
+    recommendations = analyse_tenders_for_company(company_profile, tender_facts)
+    tender_by_source = {t.source_id: t for t in live_tenders}
+
+    rows = []
+    for rec in recommendations:
+        tender = tender_by_source.get(rec.tender_source_id)
+        if tender:
+            rows.append({"tender": tender, "recommendation": rec})
+
+    apply_rows = sorted([r for r in rows if r["recommendation"].recommendation == "APPLY"], key=lambda x: x["recommendation"].confidence, reverse=True)
+    review_rows = sorted([r for r in rows if r["recommendation"].recommendation == "REVIEW"], key=lambda x: x["recommendation"].confidence, reverse=True)
 
     recompetes = db.execute(
         select(RecompeteScore, Contract)
         .join(Contract, Contract.id == RecompeteScore.contract_id)
         .where(RecompeteScore.prospect_id == prospect.id)
         .order_by(RecompeteScore.confidence.desc())
-        .limit(10)
+        .limit(8)
     ).all()
+    expiry_rows = [{"score": score, "contract": contract} for score, contract in recompetes]
 
-    coverage_from, coverage_to = db.execute(
-        select(func.min(Contract.publication_date), func.max(Contract.publication_date))
-    ).one()
+    coverage_from, coverage_to = db.execute(select(func.min(Contract.publication_date), func.max(Contract.publication_date))).one()
 
-    opportunity_facts = [_opportunity_fact(score, tender) for score, tender in matches]
-    expiry_facts = [_expiry_fact(score, contract, supplier.id) for score, contract in recompetes]
-    facts = {
-        "company_name_as_recorded": supplier.canonical_name,
-        "abn_as_recorded": supplier.abn,
-        "identity_independently_verified": False,
-        "procurement_categories": prospect.main_categories or [],
-        "inferred_capabilities": prospect.inferred_capabilities or [],
-        "recorded_contracts": supplier.contract_count,
-        "recorded_disclosed_value": str(supplier.disclosed_value),
-        "recorded_agencies": supplier.agency_count,
-        "historical_coverage": {
-            "from": _iso(coverage_from),
-            "to": _iso(coverage_to),
-            "meaning": "Date range of contract notices currently stored by NixSec; not represented as lifetime procurement history.",
-        },
-        "opportunities": opportunity_facts,
-        "expiry_watches": expiry_facts,
-        "score_note": "NixSec scores are decision-support rankings, not government evaluation scores or predictions of award.",
-    }
-    analysis = grounded_report_analysis(facts)
-    opportunity_insights = analysis.get("opportunity_insights") or {}
+    if apply_rows:
+        decision_signal = "APPLY"
+        immediate_action = f"Review the official ATM documents for {apply_rows[0]['tender'].title} first and confirm every mandatory requirement before committing bid resources."
+    elif review_rows:
+        decision_signal = "REVIEW"
+        immediate_action = "Review the shortlisted tenders against the official ATM documents before making a bid/no-bid decision."
+    else:
+        decision_signal = "MONITOR"
+        immediate_action = "No live tender has enough evidence for an APPLY recommendation at report time; continue monitoring."
 
-    match_rows = []
-    for score, tender in matches:
-        insight = opportunity_insights.get(tender.source_id) or opportunity_insights.get(tender.title) or {}
-        match_rows.append(
-            {
-                "score": score,
-                "tender": tender,
-                "insight": {
-                    "why_fit": insight.get("why_fit") or "The opportunity passed NixSec's deterministic relevance threshold; review the official tender documents before treating it as a bid target.",
-                    "action": insight.get("action") or "Open the official source and make a bid/no-bid decision against the mandatory requirements.",
-                    "risk": insight.get("risk") or "Eligibility and delivery capability have not been independently confirmed by NixSec.",
-                },
-            }
-        )
-
-    expiry_rows = [
-        {"score": score, "contract": contract}
-        for score, contract in recompetes
-    ]
-
-    env = Environment(
-        loader=FileSystemLoader(str(ROOT / "app" / "reports" / "templates")),
-        undefined=StrictUndefined,
-        autoescape=True,
+    executive_summary = (
+        f"NixSec analysed {len(live_tenders)} current source-verified live tenders against the recorded procurement history of {supplier.canonical_name}. "
+        f"The AI recommendation layer identified {len(apply_rows)} tender{'s' if len(apply_rows) != 1 else ''} to seriously consider applying for and {len(review_rows)} additional review candidate{'s' if len(review_rows) != 1 else ''}. "
+        f"{immediate_action}"
     )
+
+    env = Environment(loader=FileSystemLoader(str(ROOT / "app" / "reports" / "templates")), undefined=StrictUndefined, autoescape=True)
     html = env.get_template("report.html").render(
         report_kicker=kicker,
         report_title=title,
@@ -170,11 +190,14 @@ def generate(db: Session, prospect_id: int, report_type: str = "Two-Page Prospec
         nixsec_website=settings.nixsec_website,
         prospect=prospect,
         supplier=supplier,
-        matches=matches,
-        match_rows=match_rows,
-        recompetes=recompetes,
+        company_profile=company_profile,
+        analysed_tender_count=len(live_tenders),
+        apply_rows=apply_rows,
+        review_rows=review_rows,
         expiry_rows=expiry_rows,
-        analysis=analysis,
+        decision_signal=decision_signal,
+        executive_summary=executive_summary,
+        immediate_action=immediate_action,
         coverage_from=coverage_from,
         coverage_to=coverage_to,
     )
@@ -194,6 +217,10 @@ def generate(db: Session, prospect_id: int, report_type: str = "Two-Page Prospec
             "contract_coverage_to": _iso(coverage_to),
             "external_report_hides_internal_prospect_score": True,
             "ai_decision_support": True,
+            "ai_is_final_recommendation_layer": True,
+            "live_tenders_analysed": len(live_tenders),
+            "apply_recommendations": len(apply_rows),
+            "review_recommendations": len(review_rows),
         },
     )
     db.add(run)
