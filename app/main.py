@@ -21,8 +21,9 @@ from starlette.middleware.sessions import SessionMiddleware
 from .collectors import austender_contracts, austender_live
 from .config import ROOT, settings
 from .db import SessionLocal, get_db, init_db
-from .models import AdminUser, Agency, ClientProfile, CollectionRun, Contract, OpportunityScore, Prospect, ReportRun, Supplier, SystemSetting, Tender
+from .models import AdminUser, Agency, ClientProfile, CollectionRun, Contract, OpportunityScore, Prospect, ProspectContact, ReportRun, Supplier, SystemSetting, Tender
 from .reports.generator import generate
+from .services.contact_enrichment import enrich_missing_prospects, enrich_prospect
 from .services.prospecting import calculate_matches, discover_prospects
 
 app=FastAPI(title="NixSec Procurement Intelligence",version="1.0.0")
@@ -98,6 +99,8 @@ def initialise_job():
         contracts=austender_contracts.collect(db)
         db.merge(SystemSetting(key="initialisation",value={"stage":"Discovering and scoring prospects","running":True,"live_status":live.status,"contract_status":contracts.status})); db.commit()
         discover_prospects(db); calculate_matches(db)
+        db.merge(SystemSetting(key="initialisation",value={"stage":"Finding decision-maker emails","running":True,"live_status":live.status,"contract_status":contracts.status})); db.commit()
+        enrich_missing_prospects(db,limit=20)
         db.merge(SystemSetting(key="initialisation",value={"stage":"Complete","running":False,"live_status":live.status,"contract_status":contracts.status,"finished":datetime.now(timezone.utc).isoformat()})); db.commit()
 
 
@@ -157,13 +160,25 @@ def prospect_detail(request:Request,prospect_id:int,db:Session=Depends(get_db),_
     if not p: raise HTTPException(404)
     contracts=db.scalars(select(Contract).where(Contract.supplier_id==p.supplier_id).order_by(Contract.publication_date.desc()).limit(50)).all()
     matches=db.execute(select(OpportunityScore,Tender).join(Tender).where(OpportunityScore.prospect_id==p.id).order_by(OpportunityScore.score.desc())).all()
+    contacts=db.scalars(select(ProspectContact).where(ProspectContact.prospect_id==p.id,ProspectContact.business_email.is_not(None)).order_by(ProspectContact.created_at.desc())).all()
     client=db.scalar(select(ClientProfile).where(ClientProfile.prospect_id==p.id))
-    return templates.TemplateResponse("prospect.html",ctx(request,p=p,contracts=contracts,matches=matches,client=client))
+    return templates.TemplateResponse("prospect.html",ctx(request,p=p,contracts=contracts,matches=matches,contacts=contacts,client=client))
 
 
 @app.post("/prospects/{prospect_id}/stage")
 def set_stage(prospect_id:int,stage:str=Form(...),db:Session=Depends(get_db),_=Depends(auth)):
     p=db.get(Prospect,prospect_id); p.lifecycle_stage=stage; db.commit(); return RedirectResponse(f"/prospects/{prospect_id}",303)
+
+
+@app.post("/prospects/{prospect_id}/enrich-contacts")
+def enrich_contacts(prospect_id:int,background:BackgroundTasks,db:Session=Depends(get_db),_=Depends(auth)):
+    if not db.get(Prospect,prospect_id): raise HTTPException(404)
+    def job():
+        with SessionLocal() as session:
+            p=session.get(Prospect,prospect_id)
+            if p: enrich_prospect(session,p)
+    background.add_task(job)
+    return RedirectResponse(f"/prospects/{prospect_id}",303)
 
 
 @app.post("/prospects/{prospect_id}/convert")
