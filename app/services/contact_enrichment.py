@@ -31,6 +31,7 @@ ROLE_RE = re.compile(
     re.I,
 )
 GENERIC_LOCALS = {"info", "sales", "admin", "contact", "hello", "office", "support", "enquiries", "reception"}
+NAME_RE = re.compile(r"\b([A-Z][a-zA-Z'’-]+(?:\s+[A-Z][a-zA-Z'’-]+){1,2})\b")
 
 
 def _host(url: str) -> str:
@@ -98,18 +99,15 @@ def _normalise_email(email: str) -> str | None:
 
 
 def _name_from_block(text: str, role_match: re.Match) -> str | None:
-    # Prefer a human name immediately before/after the senior role. This never
-    # creates an email; it only labels an email already printed in the source.
-    candidates = re.findall(r"\b([A-Z][a-zA-Z'’-]+(?:\s+[A-Z][a-zA-Z'’-]+){1,3})\b", text)
-    role_words = set(role_match.group(0).lower().split())
-    for candidate in candidates:
-        words = set(candidate.lower().split())
-        if words & role_words:
-            continue
-        if candidate.lower().startswith(("chief executive", "managing director", "business development")):
-            continue
-        return candidate
-    return None
+    # Prefer the closest proper-name phrase immediately before the role. This
+    # labels only an email already printed in the same block; it never creates one.
+    before = text[:role_match.start()].strip(" -|,:;()")
+    before_matches = NAME_RE.findall(before)
+    if before_matches:
+        return before_matches[-1]
+    after = text[role_match.end():].strip(" -|,:;()")
+    after_matches = NAME_RE.findall(after)
+    return after_matches[0] if after_matches else None
 
 
 def _extract_decision_makers(url: str, html: str) -> tuple[list[dict], list[str]]:
