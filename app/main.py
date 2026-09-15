@@ -21,8 +21,9 @@ from starlette.middleware.sessions import SessionMiddleware
 from .collectors import austender_contracts, austender_live
 from .config import ROOT, settings
 from .db import SessionLocal, get_db, init_db
-from .models import AdminUser, Agency, ClientProfile, CollectionRun, Contract, OpportunityScore, Prospect, ReportRun, Supplier, SystemSetting, Tender
+from .models import AdminUser, Agency, ClientProfile, CollectionRun, Contract, OpportunityScore, Prospect, ProspectContact, ReportRun, Supplier, SystemSetting, Tender
 from .reports.generator import generate
+from .services.contact_enrichment import enrich_prospect, enrich_missing_prospects
 from .services.prospecting import calculate_matches, discover_prospects
 
 app=FastAPI(title="NixSec Procurement Intelligence",version="1.0.0")
@@ -98,6 +99,8 @@ def initialise_job():
         contracts=austender_contracts.collect(db)
         db.merge(SystemSetting(key="initialisation",value={"stage":"Discovering and scoring prospects","running":True,"live_status":live.status,"contract_status":contracts.status})); db.commit()
         discover_prospects(db); calculate_matches(db)
+        db.merge(SystemSetting(key="initialisation",value={"stage":"Enriching contact information","running":True,"live_status":live.status,"contract_status":contracts.status})); db.commit()
+        enrich_missing_prospects(db, limit=20)
         db.merge(SystemSetting(key="initialisation",value={"stage":"Complete","running":False,"live_status":live.status,"contract_status":contracts.status,"finished":datetime.now(timezone.utc).isoformat()})); db.commit()
 
 
@@ -157,8 +160,9 @@ def prospect_detail(request:Request,prospect_id:int,db:Session=Depends(get_db),_
     if not p: raise HTTPException(404)
     contracts=db.scalars(select(Contract).where(Contract.supplier_id==p.supplier_id).order_by(Contract.publication_date.desc()).limit(50)).all()
     matches=db.execute(select(OpportunityScore,Tender).join(Tender).where(OpportunityScore.prospect_id==p.id).order_by(OpportunityScore.score.desc())).all()
+    contacts=db.scalars(select(ProspectContact).where(ProspectContact.prospect_id==p.id).order_by(ProspectContact.created_at.desc())).all()
     client=db.scalar(select(ClientProfile).where(ClientProfile.prospect_id==p.id))
-    return templates.TemplateResponse("prospect.html",ctx(request,p=p,contracts=contracts,matches=matches,client=client))
+    return templates.TemplateResponse("prospect.html",ctx(request,p=p,contracts=contracts,matches=matches,contacts=contacts,client=client))
 
 
 @app.post("/prospects/{prospect_id}/stage")
@@ -173,6 +177,18 @@ def convert(prospect_id:int,db:Session=Depends(get_db),_=Depends(auth)):
     client=db.scalar(select(ClientProfile).where(ClientProfile.prospect_id==p.id))
     if not client: db.add(ClientProfile(prospect_id=p.id,company_name=p.supplier.canonical_name,abn=p.supplier.abn,industry=(p.main_categories or [None])[0],capabilities=p.inferred_capabilities or [],keywords=p.inferred_capabilities or []))
     p.lifecycle_stage="Client"; db.commit(); return RedirectResponse(f"/prospects/{prospect_id}",303)
+
+
+@app.post("/prospects/{prospect_id}/enrich-contacts")
+def enrich_contacts(prospect_id:int,background:BackgroundTasks,db:Session=Depends(get_db),_=Depends(auth)):
+    p=db.get(Prospect,prospect_id)
+    if not p: raise HTTPException(404)
+    def job():
+        with SessionLocal() as session:
+            p_fresh=session.get(Prospect,prospect_id)
+            if p_fresh: enrich_prospect(session,p_fresh)
+    background.add_task(job)
+    return RedirectResponse(f"/prospects/{prospect_id}",303)
 
 
 @app.get("/clients",response_class=HTMLResponse)
@@ -208,3 +224,4 @@ def report_download(report_id:str,db:Session=Depends(get_db),_=Depends(auth)):
 def search_all(request:Request,q:str,db:Session=Depends(get_db),_=Depends(auth)):
     ts=db.scalars(select(Tender).where(or_(Tender.title.ilike(f"%{q}%"),Tender.agency_name.ilike(f"%{q}%"))).limit(30)).all(); ps=db.scalars(select(Prospect).join(Supplier).where(Supplier.canonical_name.ilike(f"%{q}%")).limit(30)).all(); cs=db.scalars(select(Contract).where(Contract.title.ilike(f"%{q}%")).limit(30)).all()
     return templates.TemplateResponse("search.html",ctx(request,q=q,tenders=ts,prospects=ps,contracts=cs))
+
